@@ -1,0 +1,177 @@
+services:
+  # PostgreSQL Database
+  # postgres:
+  #   image: postgres:15-alpine
+  #   container_name: talentx-postgres
+  #   environment:
+  #     POSTGRES_DB: ${POSTGRES_DB:-talentx}
+  #     POSTGRES_USER: ${POSTGRES_USER:-postgres}
+  #     POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-root}
+  #   ports:
+  #     - "${POSTGRES_PORT:-5433}:5432"
+  #   volumes:
+  #     - postgres_data:/var/lib/postgresql/data
+  #   healthcheck:
+  #     test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER:-postgres}"]
+  #     interval: 10s
+  #     timeout: 5s
+  #     retries: 5
+  #   restart: unless-stopped
+
+  # FastAPI Application
+  api:
+    image: talentx-api
+    build: .
+    container_name: talentx-api
+    ports:
+      - "${API_PORT:-5000}:5000"
+    env_file:
+      - .env
+    environment:
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+      - ELASTICSEARCH_SCHEME=http
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      # postgres:
+      #   condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    healthcheck:
+      test: [ "CMD", "curl", "-f", "http://localhost:5000/health" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+    volumes:
+      - ./app:/app/app
+      - ./main.py:/app/main.py
+      - ./alembic:/app/alembic
+      - ./requirements.txt:/app/requirements.txt
+
+  # Elasticsearch for search functionality
+  elasticsearch:
+    image: elasticsearch:8.8.0
+    container_name: talentx-elasticsearch
+    environment:
+      - discovery.type=single-node
+      - xpack.security.enabled=false
+      - "ES_JAVA_OPTS=-Xms1g -Xmx1g"
+      - logger.level=ERROR
+      - logger.org.elasticsearch=ERROR
+      - logger.org.elasticsearch.cluster=ERROR
+      - logger.org.elasticsearch.plugins=ERROR
+      - logger.org.elasticsearch.node=ERROR
+      - logger.com.amazonaws=ERROR
+      - logger.org.apache.lucene=ERROR
+      - logger.stderr=ERROR
+    mem_limit: 2g
+    ports:
+      - "9200:9200"
+      - "9300:9300"
+    logging:
+      driver: "none"
+    volumes:
+      - elasticsearch_data:/usr/share/elasticsearch/data
+    healthcheck:
+      test: [ "CMD-SHELL", "curl -f http://localhost:9200/_cluster/health || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 5
+    restart: unless-stopped
+
+  # Redis for caching and sessions
+  redis:
+    image: redis:7-alpine
+    container_name: talentx-redis
+    ports:
+      - "6379:6379"
+    volumes:
+      - redis_data:/data
+    healthcheck:
+      test: [ "CMD", "redis-cli", "ping" ]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+    restart: unless-stopped
+
+  # Celery Worker for background tasks
+  celery-worker:
+    build: .
+    container_name: talentx-celery-worker
+    command: watchmedo auto-restart --directory=./app --pattern="*.py" --recursive -- celery -A app.core.celery:celery_app worker --loglevel=info --concurrency=2 --queues=celery,cv_reminders,emails,maintenance,analytics
+    env_file:
+      - .env
+    environment:
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+      - ELASTICSEARCH_SCHEME=http
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_USE_SSL=${SMTP_USE_SSL}
+      - POSTMARK_SERVER_TOKEN=${POSTMARK_SERVER_TOKEN}
+      - FROM_EMAIL=${FROM_EMAIL}
+      - FROM_NAME=${FROM_NAME}
+    depends_on:
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    volumes:
+      - ./app:/app/app
+      - ./main.py:/app/main.py
+      - ./alembic:/app/alembic
+    healthcheck:
+      test: [ "CMD-SHELL", "celery -A app.core.celery inspect ping || exit 1" ]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s
+
+  # Celery Beat for scheduled tasks
+  celery-beat:
+    build: .
+    container_name: talentx-celery-beat
+    command: sh -c "mkdir -p /app/data/celery && chown -R appuser:appuser /app/data/celery && chmod -R 755 /app/data/celery && watchmedo auto-restart --directory=./app --pattern='*.py' --recursive -- celery -A app.core.celery:celery_app beat --loglevel=info --scheduler=celery.beat:PersistentScheduler --schedule=/app/data/celery/celerybeat-schedule"
+    env_file:
+      - .env
+    environment:
+      - ELASTICSEARCH_HOST=elasticsearch
+      - ELASTICSEARCH_PORT=9200
+      - ELASTICSEARCH_SCHEME=http
+      - REDIS_URL=redis://redis:6379/0
+      - CELERY_BROKER_URL=redis://redis:6379/0
+      - CELERY_RESULT_BACKEND=redis://redis:6379/0
+      - SMTP_HOST=${SMTP_HOST}
+      - SMTP_PORT=${SMTP_PORT}
+      - SMTP_USERNAME=${SMTP_USERNAME}
+      - SMTP_PASSWORD=${SMTP_PASSWORD}
+      - SMTP_USE_SSL=${SMTP_USE_SSL}
+      - POSTMARK_SERVER_TOKEN=${POSTMARK_SERVER_TOKEN}
+      - FROM_EMAIL=${FROM_EMAIL}
+      - FROM_NAME=${FROM_NAME}
+    depends_on:
+      redis:
+        condition: service_healthy
+      elasticsearch:
+        condition: service_healthy
+    restart: unless-stopped
+    user: root
+    volumes:
+      - ./app:/app/app
+      - ./main.py:/app/main.py
+      - ./alembic:/app/alembic
+      - celery_data:/app/data/celery
+
+volumes:
+  # postgres_data:
+  elasticsearch_data:
+  redis_data:
+  celery_data:
