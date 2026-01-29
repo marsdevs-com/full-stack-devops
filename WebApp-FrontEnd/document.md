@@ -1,6 +1,6 @@
 # Project Documentation
 
-This document provides comprehensive documentation for the TalentX Customer Webapp, covering API patterns, form validation, custom hooks, state management, component architecture, route protection, and infinite scrolling with virtualization.
+This document provides comprehensive documentation for the Customer Webapp, covering API patterns, form validation, custom hooks, state management, component architecture, route protection, and infinite scrolling with virtualization.
 
 ## Table of Contents
 
@@ -38,7 +38,7 @@ This is a Next.js 15 application built with React 19, implementing a job marketp
 ## 2. Project Structure
 
 ```
-talentx-customer-webapp/
+customer-webapp/
 ├── src/
 │   ├── apis/                    # API hooks (TanStack Query)
 │   │   ├── auth.ts              # Authentication APIs
